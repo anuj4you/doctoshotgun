@@ -60,25 +60,8 @@ def log_ts(text=None, *args, **kwargs):
     if text:
         log(text, *args, **kwargs)
 
-# Singleton Main Class
-# Define a singleton for other classes to use as metaclasses
-# Reference: https://sourcemaking.com/design_patterns/singleton/python/1
-class Singleton(type):
-    """
-    Singleton class for other classes to inherit
-    Define operations to access unique instances
-    """
-    def __init__(cls, name, bases, attrs, **kwargs):
-        super().__init__(name, bases, attrs)
-        cls._instance = None
 
-    def __call__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super().__call__(*args, **kwargs)
-        return cls._instance
-
-# Use Singleton as metaclass
-class Session(cloudscraper.CloudScraper, metaclass = Singleton):
+class Session(cloudscraper.CloudScraper):
     def send(self, *args, **kwargs):
         callback = kwargs.pop('callback', lambda future, response: response)
         is_async = kwargs.pop('is_async', False)
@@ -564,111 +547,125 @@ class Doctolib(LoginBrowser):
 
         return self.page.doc['confirmed']
 
-# Factory Design Pattern
-# General Doctolib Vaccine Keys Generator
-class DoctolibGenerator:
-    def initialize_baseurl(self, url):
-        self.BASEURL = url
-        self.vaccine_motives = {}
-
-    def initialize_pfizer(self, key1, key2, key3,
-                          motive1, motive2, motive3):
-        self.KEY_PFIZER = key1
-        self.KEY_PFIZER_SECOND = key2
-        self.KEY_PFIZER_THIRD = key3
-
-        self.vaccine_motives[self.KEY_PFIZER] = motive1
-        self.vaccine_motives[self.KEY_PFIZER_SECOND] = motive2
-        self.vaccine_motives[self.KEY_PFIZER_THIRD] = motive3
-
-    def initialize_moderna(self, key1, key2, key3,
-                           motive1, motive2, motive3):
-        self.KEY_MODERNA = key1
-        self.KEY_MODERNA_SECOND = key2
-        self.KEY_MODERNA_THIRD = key3
-
-        self.vaccine_motives[self.KEY_MODERNA] = motive1
-        self.vaccine_motives[self.KEY_MODERNA_SECOND] = motive2
-        self.vaccine_motives[self.KEY_MODERNA_THIRD] = motive3
-
-    def initialize_janssen(self, key, motive):
-        self.KEY_JANSSEN = key
-        self.vaccine_motives[self.KEY_JANSSEN] = motive
-
-    def initialize_astrazeneca(self, key1, key2, motive1, motive2):
-        self.KEY_ASTRAZENECA = key1
-        self.KEY_ASTRAZENECA_SECOND = key2
-
-        self.vaccine_motives[self.KEY_ASTRAZENECA] = motive1
-        self.vaccine_motives[self.KEY_ASTRAZENECA_SECOND] = motive2
-
-    def initialize_centers(self, centersurl, centerurl):
-        self.centers = URL(centersurl, CentersPage)
-        self.center = URL(centerurl, CenterPage)
-
-# Specialized Doctolib Generator for DE
-class DoctolibDEGenerator(DoctolibGenerator):
-    def __init__(self):
-        self.initialize_baseurl('https://www.doctolib.de')
-        self.initialize_pfizer('6768', '6769', None,
-                    'Pfizer', 'Zweit.*Pfizer|Pfizer.*Zweit', 'Dritt.*Pfizer|Pfizer.*Dritt')
-        self.initialize_moderna('6936', '6937', None,
-                    'Moderna', 'Zweit.*Moderna|Moderna.*Zweit', 'Dritt.*Moderna|Moderna.*Dritt')
-        self.initialize_janssen('7978', 'Janssen')
-        self.initialize_astrazeneca('7109', '7110', 
-                    'AstraZeneca', 'Zweit.*AstraZeneca|AstraZeneca.*Zweit')
-        self.initialize_centers(r'/impfung-covid-19-corona/(?P<where>\w+)', r'/praxis/.*')
-
-# SpecializedDoctolib Generator for FR
-class DoctolibFRGenerator(DoctolibGenerator):
-    def __init__(self):
-        self.initialize_baseurl('https://www.doctolib.fr')
-        self.initialize_pfizer('6970', '6971', '8192',
-                    'Pfizer', '2de.*Pfizer', '3e.*Pfizer')
-        self.initialize_moderna('7005', '7004', '8193',
-                    'Moderna', '2de.*Moderna', '3e.*Moderna')
-        self.initialize_janssen('7945', 'Janssen')
-        self.initialize_astrazeneca('7107', '7108', 
-                    'AstraZeneca', '2de.*AstraZeneca')
-        self.initialize_centers(r'/vaccination-covid-19/(?P<where>\w+)', r'/centre-de-sante/.*')
 
 class DoctolibDE(Doctolib):
-    # Use specialized Factory to generate constants
-    generator = DoctolibDEGenerator()
-    BASEURL = generator.BASEURL
-    KEY_PFIZER = generator.KEY_PFIZER
-    KEY_PFIZER_SECOND = generator.KEY_PFIZER_SECOND
-    KEY_PFIZER_THIRD = generator.KEY_PFIZER_THIRD
-    KEY_MODERNA = generator.KEY_MODERNA
-    KEY_MODERNA_SECOND = generator.KEY_MODERNA_SECOND
-    KEY_MODERNA_THIRD = generator.KEY_MODERNA_THIRD
-    KEY_JANSSEN = generator.KEY_JANSSEN
-    KEY_ASTRAZENECA = generator.KEY_ASTRAZENECA
-    KEY_ASTRAZENECA_SECOND = generator.KEY_ASTRAZENECA_SECOND
-    vaccine_motives = generator.vaccine_motives
-    centers = generator.centers
-    center = generator.center
-    
+    BASEURL = 'https://www.doctolib.de'
+    KEY_PFIZER = '6768'
+    KEY_PFIZER_SECOND = '6769'
+    KEY_PFIZER_THIRD = None
+    KEY_MODERNA = '6936'
+    KEY_MODERNA_SECOND = '6937'
+    KEY_MODERNA_THIRD = None
+    KEY_JANSSEN = '7978'
+    KEY_ASTRAZENECA = '7109'
+    KEY_ASTRAZENECA_SECOND = '7110'
+    vaccine_motives = {
+        KEY_PFIZER: 'Pfizer',
+        KEY_PFIZER_SECOND: 'Zweit.*Pfizer|Pfizer.*Zweit',
+        KEY_PFIZER_THIRD: 'Dritt.*Pfizer|Pfizer.*Dritt',
+        KEY_MODERNA: 'Moderna',
+        KEY_MODERNA_SECOND: 'Zweit.*Moderna|Moderna.*Zweit',
+        KEY_MODERNA_THIRD: 'Dritt.*Moderna|Moderna.*Dritt',
+        KEY_JANSSEN: 'Janssen',
+        KEY_ASTRAZENECA: 'AstraZeneca',
+        KEY_ASTRAZENECA_SECOND: 'Zweit.*AstraZeneca|AstraZeneca.*Zweit',
+    }
+    centers = URL(r'/impfung-covid-19-corona/(?P<where>\w+)', CentersPage)
+    center = URL(r'/praxis/.*', CenterPage)
+
+    # Vaccine Object for Decorator object
+    vaccine_object = {
+        'pfizer': [KEY_PFIZER, KEY_PFIZER_SECOND, KEY_PFIZER_THIRD],
+        'moderna': [KEY_MODERNA, KEY_MODERNA_SECOND, KEY_MODERNA_THIRD],
+        'janssen': [KEY_JANSSEN],
+        'astrazeneca': [KEY_ASTRAZENECA, KEY_ASTRAZENECA_SECOND]
+    }
+
 
 class DoctolibFR(Doctolib):
-    # Use specialized Factory to generate constants
-    generator = DoctolibFRGenerator()
-    BASEURL = generator.BASEURL
-    KEY_PFIZER = generator.KEY_PFIZER
-    KEY_PFIZER_SECOND = generator.KEY_PFIZER_SECOND
-    KEY_PFIZER_THIRD = generator.KEY_PFIZER_THIRD
-    KEY_MODERNA = generator.KEY_MODERNA
-    KEY_MODERNA_SECOND = generator.KEY_MODERNA_SECOND
-    KEY_MODERNA_THIRD = generator.KEY_MODERNA_THIRD
-    KEY_JANSSEN = generator.KEY_JANSSEN
-    KEY_ASTRAZENECA = generator.KEY_ASTRAZENECA
-    KEY_ASTRAZENECA_SECOND = generator.KEY_ASTRAZENECA_SECOND
-    vaccine_motives = generator.vaccine_motives
-    centers = generator.centers
-    center = generator.center
+    BASEURL = 'https://www.doctolib.fr'
+    KEY_PFIZER = '6970'
+    KEY_PFIZER_SECOND = '6971'
+    KEY_PFIZER_THIRD = '8192'
+    KEY_MODERNA = '7005'
+    KEY_MODERNA_SECOND = '7004'
+    KEY_MODERNA_THIRD = '8193'
+    KEY_JANSSEN = '7945'
+    KEY_ASTRAZENECA = '7107'
+    KEY_ASTRAZENECA_SECOND = '7108'
+    vaccine_motives = {
+        KEY_PFIZER: 'Pfizer',
+        KEY_PFIZER_SECOND: '2de.*Pfizer',
+        KEY_PFIZER_THIRD: '3e.*Pfizer',
+        KEY_MODERNA: 'Moderna',
+        KEY_MODERNA_SECOND: '2de.*Moderna',
+        KEY_MODERNA_THIRD: '3e.*Moderna',
+        KEY_JANSSEN: 'Janssen',
+        KEY_ASTRAZENECA: 'AstraZeneca',
+        KEY_ASTRAZENECA_SECOND: '2de.*AstraZeneca',
+    }
+    centers = URL(r'/vaccination-covid-19/(?P<where>\w+)', CentersPage)
+    center = URL(r'/centre-de-sante/.*', CenterPage)
 
-# Use Singleton as metaclass
-class Application(metaclass = Singleton):
+    # Vaccine Object for Decorator object
+    vaccine_object = {
+        'pfizer': [KEY_PFIZER, KEY_PFIZER_SECOND, KEY_PFIZER_THIRD],
+        'moderna': [KEY_MODERNA, KEY_MODERNA_SECOND, KEY_MODERNA_THIRD],
+        'janssen': [KEY_JANSSEN],
+        'astrazeneca': [KEY_ASTRAZENECA, KEY_ASTRAZENECA_SECOND]
+    }
+
+# Define Vaccine Decorator Functions
+# pfizer decorator
+def add_pfizer(vaccine_list):
+    vaccine_list.append('pfizer')
+    return vaccine_list
+# moderna decorator
+def add_moderna(vaccine_list):
+    vaccine_list.append('moderna')
+    return vaccine_list
+# janssen decorator
+def add_janssen(vaccine_list):
+    vaccine_list.append('janssen')
+    return vaccine_list
+# astrazeneca decorator
+def add_astrazeneca(vaccine_list):
+    vaccine_list.append('astrazeneca')
+    return vaccine_list
+
+# Vaccine Dose Functions
+# first dose function
+def add_first_dose(vaccine_list, motives, doctolib):
+    for vaccine in vaccine_list:
+        try:
+            motive = doctolib.vaccine_object[vaccine][0]
+            motives.append(motive)
+        except IndexError:
+            print(f"Invalid args: {vaccine} has no first shot")
+
+    return motive
+# second dose function
+def add_second_dose(vaccine_list, motives, doctolib):
+    for vaccine in vaccine_list:
+        try:
+            motive = doctolib.vaccine_object[vaccine][1]
+            motives.append(motive)
+        except IndexError:
+            print(f"Invalid args: {vaccine} has no second shot")
+    
+    return motives
+# third dose function
+def add_third_dose(vaccine_list, motives, doctolib):
+    for vaccine in vaccine_list:
+        try:
+            motive = doctolib.vaccine_object[vaccine][2]
+            motives.append(motive)
+        except IndexError:
+            print(f"Invalid args: {vaccine} has no third shot")
+    
+    return motives
+
+class Application:
     @classmethod
     def create_default_logger(cls):
         # stderr logger
@@ -777,58 +774,91 @@ class Application(metaclass = Singleton):
             docto.patient = patients[0]
 
         motives = []
-        if not args.pfizer and not args.moderna and not args.janssen and not args.astrazeneca:
-            if args.only_second:
-                motives.append(docto.KEY_PFIZER_SECOND)
-                motives.append(docto.KEY_MODERNA_SECOND)
-                # motives.append(docto.KEY_ASTRAZENECA_SECOND) #do not add AstraZeneca by default
-            elif args.only_third:
-                if not docto.KEY_PFIZER_THIRD and not docto.KEY_MODERNA_THIRD:
-                    print('Invalid args: No third shot vaccinations in this country')
-                    return 1
-                motives.append(docto.KEY_PFIZER_THIRD)
-                motives.append(docto.KEY_MODERNA_THIRD)
-            else:
-                motives.append(docto.KEY_PFIZER)
-                motives.append(docto.KEY_MODERNA)
-                motives.append(docto.KEY_JANSSEN)
-                # motives.append(docto.KEY_ASTRAZENECA) #do not add AstraZeneca by default
+        
+        # Decorator Pattern
+        # Decorate the vaccine_object_list
+        vaccine_object_list = []
         if args.pfizer:
-            if args.only_second:
-                motives.append(docto.KEY_PFIZER_SECOND)
-            elif args.only_third:
-                if not docto.KEY_PFIZER_THIRD:  # not available in all countries
-                    print('Invalid args: Pfizer has no third shot in this country')
-                    return 1
-                motives.append(docto.KEY_PFIZER_THIRD)
-            else:
-                motives.append(docto.KEY_PFIZER)
+            vaccine_object_list = add_pfizer(vaccine_object_list)
         if args.moderna:
-            if args.only_second:
-                motives.append(docto.KEY_MODERNA_SECOND)
-            elif args.only_third:
-                if not docto.KEY_MODERNA_THIRD:  # not available in all countries
-                    print('Invalid args: Moderna has no third shot in this country')
-                    return 1
-                motives.append(docto.KEY_MODERNA_THIRD)
-            else:
-                motives.append(docto.KEY_MODERNA)
+            vaccine_object_list = add_moderna(vaccine_object_list)
         if args.janssen:
-            if args.only_second or args.only_third:
-                print('Invalid args: Janssen has no second or third shot')
-                return 1
-            else:
-                motives.append(docto.KEY_JANSSEN)
+            vaccine_object_list = add_janssen(vaccine_object_list)
         if args.astrazeneca:
-            if args.only_second:
-                motives.append(docto.KEY_ASTRAZENECA_SECOND)
-            elif args.only_third:
-                print('Invalid args: AstraZeneca has no third shot')
+            vaccine_object_list = add_astrazeneca(vaccine_object_list)
+        if not args.pfizer and not args.moderna and not args.janssen and not args.astrazeneca:
+            vaccine_object_list = add_pfizer(vaccine_object_list)
+            vaccine_object_list = add_moderna(vaccine_object_list)
+            vaccine_object_list = add_janssen(vaccine_object_list)
+            # vaccine_object_list = add_astrazeneca(vaccine_object_list) # do not add AstraZeneca by default
+
+        # Finally generate the vaccine motive
+        if args.only_second:
+            motives = add_second_dose(vaccine_object_list, motives, docto)
+        elif args.only_third:
+            motives = add_third_dose(vaccine_object_list, motives, docto)
+        else:
+            motives = add_first_dose(vaccine_object_list, motives, docto)
+
+        # Comment out previous implementation
+        # if not args.pfizer and not args.moderna and not args.janssen and not args.astrazeneca:
+        #     if args.only_second:
+        #         motives.append(docto.KEY_PFIZER_SECOND)
+        #         motives.append(docto.KEY_MODERNA_SECOND)
+        #         # motives.append(docto.KEY_ASTRAZENECA_SECOND) #do not add AstraZeneca by default
+        #     elif args.only_third:
+        #         if not docto.KEY_PFIZER_THIRD and not docto.KEY_MODERNA_THIRD:
+        #             print('Invalid args: No third shot vaccinations in this country')
+        #             return 1
+        #         motives.append(docto.KEY_PFIZER_THIRD)
+        #         motives.append(docto.KEY_MODERNA_THIRD)
+        #     else:
+        #         motives.append(docto.KEY_PFIZER)
+        #         motives.append(docto.KEY_MODERNA)
+        #         motives.append(docto.KEY_JANSSEN)
+        #         # motives.append(docto.KEY_ASTRAZENECA) #do not add AstraZeneca by default
+        # if args.pfizer:
+        #     if args.only_second:
+        #         motives.append(docto.KEY_PFIZER_SECOND)
+        #     elif args.only_third:
+        #         if not docto.KEY_PFIZER_THIRD:  # not available in all countries
+        #             print('Invalid args: Pfizer has no third shot in this country')
+        #             return 1
+        #         motives.append(docto.KEY_PFIZER_THIRD)
+        #     else:
+        #         motives.append(docto.KEY_PFIZER)
+        # if args.moderna:
+        #     if args.only_second:
+        #         motives.append(docto.KEY_MODERNA_SECOND)
+        #     elif args.only_third:
+        #         if not docto.KEY_MODERNA_THIRD:  # not available in all countries
+        #             print('Invalid args: Moderna has no third shot in this country')
+        #             return 1
+        #         motives.append(docto.KEY_MODERNA_THIRD)
+        #     else:
+        #         motives.append(docto.KEY_MODERNA)
+        # if args.janssen:
+        #     if args.only_second or args.only_third:
+        #         print('Invalid args: Janssen has no second or third shot')
+        #         return 1
+        #     else:
+        #         motives.append(docto.KEY_JANSSEN)
+        # if args.astrazeneca:
+        #     if args.only_second:
+        #         motives.append(docto.KEY_ASTRAZENECA_SECOND)
+        #     elif args.only_third:
+        #         print('Invalid args: AstraZeneca has no third shot')
+        #         return 1
+        #     else:
+        #         motives.append(docto.KEY_ASTRAZENECA)
+
+        # Generate vaccine list from motives
+        vaccine_list = []
+        for motive in motives:
+            if motive is None:
                 return 1
             else:
-                motives.append(docto.KEY_ASTRAZENECA)
-
-        vaccine_list = [docto.vaccine_motives[motive] for motive in motives]
+                vaccine_list.append(docto.vaccine_motives[motive])
 
         if args.start_date:
             try:
