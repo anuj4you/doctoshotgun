@@ -573,6 +573,14 @@ class DoctolibDE(Doctolib):
     centers = URL(r'/impfung-covid-19-corona/(?P<where>\w+)', CentersPage)
     center = URL(r'/praxis/.*', CenterPage)
 
+    # Vaccine Object for Decorator object
+    vaccine_object = {
+        'pfizer': [KEY_PFIZER, KEY_PFIZER_SECOND, KEY_PFIZER_THIRD],
+        'moderna': [KEY_MODERNA, KEY_MODERNA_SECOND, KEY_MODERNA_THIRD],
+        'janssen': [KEY_JANSSEN],
+        'astrazeneca': [KEY_ASTRAZENECA, KEY_ASTRAZENECA_SECOND]
+    }
+
 
 class DoctolibFR(Doctolib):
     BASEURL = 'https://www.doctolib.fr'
@@ -596,10 +604,66 @@ class DoctolibFR(Doctolib):
         KEY_ASTRAZENECA: 'AstraZeneca',
         KEY_ASTRAZENECA_SECOND: '2de.*AstraZeneca',
     }
-
     centers = URL(r'/vaccination-covid-19/(?P<where>\w+)', CentersPage)
     center = URL(r'/centre-de-sante/.*', CenterPage)
 
+    # Vaccine Object for Decorator object
+    vaccine_object = {
+        'pfizer': [KEY_PFIZER, KEY_PFIZER_SECOND, KEY_PFIZER_THIRD],
+        'moderna': [KEY_MODERNA, KEY_MODERNA_SECOND, KEY_MODERNA_THIRD],
+        'janssen': [KEY_JANSSEN],
+        'astrazeneca': [KEY_ASTRAZENECA, KEY_ASTRAZENECA_SECOND]
+    }
+
+# Define Vaccine Decorator Functions
+# pfizer decorator
+def add_pfizer(vaccine_list):
+    vaccine_list.append('pfizer')
+    return vaccine_list
+# moderna decorator
+def add_moderna(vaccine_list):
+    vaccine_list.append('moderna')
+    return vaccine_list
+# janssen decorator
+def add_janssen(vaccine_list):
+    vaccine_list.append('janssen')
+    return vaccine_list
+# astrazeneca decorator
+def add_astrazeneca(vaccine_list):
+    vaccine_list.append('astrazeneca')
+    return vaccine_list
+
+# Vaccine Dose Functions
+# first dose function
+def add_first_dose(vaccine_list, motives, doctolib):
+    for vaccine in vaccine_list:
+        try:
+            motive = doctolib.vaccine_object[vaccine][0]
+            motives.append(motive)
+        except IndexError:
+            print(f"Invalid args: {vaccine} has no first shot")
+
+    return motive
+# second dose function
+def add_second_dose(vaccine_list, motives, doctolib):
+    for vaccine in vaccine_list:
+        try:
+            motive = doctolib.vaccine_object[vaccine][1]
+            motives.append(motive)
+        except IndexError:
+            print(f"Invalid args: {vaccine} has no second shot")
+    
+    return motives
+# third dose function
+def add_third_dose(vaccine_list, motives, doctolib):
+    for vaccine in vaccine_list:
+        try:
+            motive = doctolib.vaccine_object[vaccine][2]
+            motives.append(motive)
+        except IndexError:
+            print(f"Invalid args: {vaccine} has no third shot")
+    
+    return motives
 
 class Application:
     @classmethod
@@ -710,58 +774,91 @@ class Application:
             docto.patient = patients[0]
 
         motives = []
-        if not args.pfizer and not args.moderna and not args.janssen and not args.astrazeneca:
-            if args.only_second:
-                motives.append(docto.KEY_PFIZER_SECOND)
-                motives.append(docto.KEY_MODERNA_SECOND)
-                # motives.append(docto.KEY_ASTRAZENECA_SECOND) #do not add AstraZeneca by default
-            elif args.only_third:
-                if not docto.KEY_PFIZER_THIRD and not docto.KEY_MODERNA_THIRD:
-                    print('Invalid args: No third shot vaccinations in this country')
-                    return 1
-                motives.append(docto.KEY_PFIZER_THIRD)
-                motives.append(docto.KEY_MODERNA_THIRD)
-            else:
-                motives.append(docto.KEY_PFIZER)
-                motives.append(docto.KEY_MODERNA)
-                motives.append(docto.KEY_JANSSEN)
-                # motives.append(docto.KEY_ASTRAZENECA) #do not add AstraZeneca by default
+        
+        # Decorator Pattern
+        # Decorate the vaccine_object_list
+        vaccine_object_list = []
         if args.pfizer:
-            if args.only_second:
-                motives.append(docto.KEY_PFIZER_SECOND)
-            elif args.only_third:
-                if not docto.KEY_PFIZER_THIRD:  # not available in all countries
-                    print('Invalid args: Pfizer has no third shot in this country')
-                    return 1
-                motives.append(docto.KEY_PFIZER_THIRD)
-            else:
-                motives.append(docto.KEY_PFIZER)
+            vaccine_object_list = add_pfizer(vaccine_object_list)
         if args.moderna:
-            if args.only_second:
-                motives.append(docto.KEY_MODERNA_SECOND)
-            elif args.only_third:
-                if not docto.KEY_MODERNA_THIRD:  # not available in all countries
-                    print('Invalid args: Moderna has no third shot in this country')
-                    return 1
-                motives.append(docto.KEY_MODERNA_THIRD)
-            else:
-                motives.append(docto.KEY_MODERNA)
+            vaccine_object_list = add_moderna(vaccine_object_list)
         if args.janssen:
-            if args.only_second or args.only_third:
-                print('Invalid args: Janssen has no second or third shot')
-                return 1
-            else:
-                motives.append(docto.KEY_JANSSEN)
+            vaccine_object_list = add_janssen(vaccine_object_list)
         if args.astrazeneca:
-            if args.only_second:
-                motives.append(docto.KEY_ASTRAZENECA_SECOND)
-            elif args.only_third:
-                print('Invalid args: AstraZeneca has no third shot')
+            vaccine_object_list = add_astrazeneca(vaccine_object_list)
+        if not args.pfizer and not args.moderna and not args.janssen and not args.astrazeneca:
+            vaccine_object_list = add_pfizer(vaccine_object_list)
+            vaccine_object_list = add_moderna(vaccine_object_list)
+            vaccine_object_list = add_janssen(vaccine_object_list)
+            # vaccine_object_list = add_astrazeneca(vaccine_object_list) # do not add AstraZeneca by default
+
+        # Finally generate the vaccine motive
+        if args.only_second:
+            motives = add_second_dose(vaccine_object_list, motives, docto)
+        elif args.only_third:
+            motives = add_third_dose(vaccine_object_list, motives, docto)
+        else:
+            motives = add_first_dose(vaccine_object_list, motives, docto)
+
+        # Comment out previous implementation
+        # if not args.pfizer and not args.moderna and not args.janssen and not args.astrazeneca:
+        #     if args.only_second:
+        #         motives.append(docto.KEY_PFIZER_SECOND)
+        #         motives.append(docto.KEY_MODERNA_SECOND)
+        #         # motives.append(docto.KEY_ASTRAZENECA_SECOND) #do not add AstraZeneca by default
+        #     elif args.only_third:
+        #         if not docto.KEY_PFIZER_THIRD and not docto.KEY_MODERNA_THIRD:
+        #             print('Invalid args: No third shot vaccinations in this country')
+        #             return 1
+        #         motives.append(docto.KEY_PFIZER_THIRD)
+        #         motives.append(docto.KEY_MODERNA_THIRD)
+        #     else:
+        #         motives.append(docto.KEY_PFIZER)
+        #         motives.append(docto.KEY_MODERNA)
+        #         motives.append(docto.KEY_JANSSEN)
+        #         # motives.append(docto.KEY_ASTRAZENECA) #do not add AstraZeneca by default
+        # if args.pfizer:
+        #     if args.only_second:
+        #         motives.append(docto.KEY_PFIZER_SECOND)
+        #     elif args.only_third:
+        #         if not docto.KEY_PFIZER_THIRD:  # not available in all countries
+        #             print('Invalid args: Pfizer has no third shot in this country')
+        #             return 1
+        #         motives.append(docto.KEY_PFIZER_THIRD)
+        #     else:
+        #         motives.append(docto.KEY_PFIZER)
+        # if args.moderna:
+        #     if args.only_second:
+        #         motives.append(docto.KEY_MODERNA_SECOND)
+        #     elif args.only_third:
+        #         if not docto.KEY_MODERNA_THIRD:  # not available in all countries
+        #             print('Invalid args: Moderna has no third shot in this country')
+        #             return 1
+        #         motives.append(docto.KEY_MODERNA_THIRD)
+        #     else:
+        #         motives.append(docto.KEY_MODERNA)
+        # if args.janssen:
+        #     if args.only_second or args.only_third:
+        #         print('Invalid args: Janssen has no second or third shot')
+        #         return 1
+        #     else:
+        #         motives.append(docto.KEY_JANSSEN)
+        # if args.astrazeneca:
+        #     if args.only_second:
+        #         motives.append(docto.KEY_ASTRAZENECA_SECOND)
+        #     elif args.only_third:
+        #         print('Invalid args: AstraZeneca has no third shot')
+        #         return 1
+        #     else:
+        #         motives.append(docto.KEY_ASTRAZENECA)
+
+        # Generate vaccine list from motives
+        vaccine_list = []
+        for motive in motives:
+            if motive is None:
                 return 1
             else:
-                motives.append(docto.KEY_ASTRAZENECA)
-
-        vaccine_list = [docto.vaccine_motives[motive] for motive in motives]
+                vaccine_list.append(docto.vaccine_motives[motive])
 
         if args.start_date:
             try:
