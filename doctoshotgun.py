@@ -348,14 +348,21 @@ class Doctolib(LoginBrowser):
         normalized = re.sub(r'\W', '-', normalized)
         return normalized.lower()
 
-    def try_to_book(self, center, vaccine_list, start_date, end_date, only_second, only_third, dry_run=False):
+    # Chain of Responsibility
+    # Functions for each step of the try_to_book function
+    # Function 1
+    def _get_center_page(self, center):
         self.open(center['url'])
         p = urlparse(center['url'])
         center_id = p.path.split('/')[-1]
 
         center_page = self.center_booking.go(center_id=center_id)
         profile_id = self.page.get_profile_id()
-        # extract motive ids based on the vaccine names
+
+        return center_page, profile_id
+
+    # Function 2
+    def _extract_motives(self, vaccine_list, only_second, only_third):
         motives_id = dict()
         for vaccine in vaccine_list:
             motives_id[vaccine] = self.page.find_motive(
@@ -363,11 +370,22 @@ class Doctolib(LoginBrowser):
 
         motives_id = dict((k, v)
                           for k, v in motives_id.items() if v is not None)
+
+        return motives_id   
+    
+    # Chain of Responsibility Pattern
+    def try_to_book(self, center, vaccine_list, start_date, end_date, only_second, only_third, dry_run=False):
+        # Get center page information
+        center_page, profile_id = self._get_center_page(center)
+        
+        # Extract motive ids based on the vaccine names
+        motives_id = self._extract_motives(vaccine_list, only_second, only_third)
         if len(motives_id.values()) == 0:
             log('Unable to find requested vaccines in motives')
             log('Motives: %s', ', '.join(self.page.get_motives()))
             return False
 
+        # Book Place
         for place in self.page.get_places():
             if place['name']:
                 log('– %s...', place['name'])
@@ -384,7 +402,10 @@ class Doctolib(LoginBrowser):
 
         return False
 
-    def try_to_book_place(self, profile_id, motive_id, practice_id, agenda_ids, vac_name, start_date, end_date, only_second, only_third, dry_run=False):
+    # Chain of Responsibility
+    # Functions for each step of the try_to_book_place function
+    # Function 1
+    def _check_dates(self, start_date, motive_id, agenda_ids, practice_id):
         date = start_date.strftime('%Y-%m-%d')
         while date is not None:
             self.availabilities.go(
@@ -400,17 +421,10 @@ class Doctolib(LoginBrowser):
             else:
                 date = None
 
-        if len(self.page.doc['availabilities']) == 0:
-            log('no availabilities', color='red')
-            return False
-
-        slot = self.page.find_best_slot(start_date, end_date)
-        if not slot:
-            if only_second == False and only_third == False:
-                log('First slot not found :(', color='red')
-            else:
-                log('Slot not found :(', color='red')
-            return False
+    # Function 2
+    def _parse_slot(self, slot, only_second, only_third, vac_name):
+        slot_date_first = None
+        slot_date_second = None
 
         # depending on the country, the slot is returned in a different format. Go figure...
         if isinstance(slot, dict) and 'start_date' in slot:
@@ -434,6 +448,82 @@ class Doctolib(LoginBrowser):
         log('found!', color='green')
         log('  ├╴ Best slot found: %s', parse_date(
             slot_date_first).strftime('%c'))
+
+        return slot_date_first, slot_date_second
+
+    # Function 3
+    def _make_booking(self, headers, dry_run):
+        a_id = self.page.doc['id']
+
+        self.appointment_edit.go(id=a_id)
+
+        log('  ├╴ Booking for %(first_name)s %(last_name)s...' % self.patient)
+
+        self.appointment_edit.go(
+            id=a_id, params={'master_patient_id': self.patient['id']})
+
+        custom_fields = {}
+        for field in self.page.get_custom_fields():
+            if field['id'] == 'cov19':
+                value = 'Non'
+            elif field['placeholder']:
+                value = field['placeholder']
+            else:
+                print('%s (%s):' %
+                      (field['label'], field['placeholder']), end=' ', flush=True)
+                value = sys.stdin.readline().strip()
+
+            custom_fields[field['id']] = value
+
+        if dry_run:
+            log('  └╴ Booking status: %s', 'fake')
+            return True
+
+        data = {'appointment': {'custom_fields_values': custom_fields,
+                                'new_patient': True,
+                                'qualification_answers': {},
+                                'referrer_id': None,
+                                },
+                'bypass_mandatory_relative_contact_info': False,
+                'email': None,
+                'master_patient': self.patient,
+                'new_patient': True,
+                'patient': None,
+                'phone_number': None,
+                }
+
+        self.appointment_post.go(id=a_id, data=json.dumps(
+            data), headers=headers, method='PUT')
+
+        if 'redirection' in self.page.doc and not 'confirmed-appointment' in self.page.doc['redirection']:
+            log('  ├╴ Open %s to complete', self.BASEURL +
+                self.page.doc['redirection'])
+
+        self.appointment_post.go(id=a_id)
+
+        log('  └╴ Booking status: %s', self.page.doc['confirmed'])
+        
+        return self.page.doc['confirmed']
+
+    # Chain of Responsibility Pattern
+    def try_to_book_place(self, profile_id, motive_id, practice_id, agenda_ids, vac_name, start_date, end_date, only_second, only_third, dry_run=False):
+        # Check dates for availibility
+        self._check_dates(start_date, motive_id, agenda_ids, practice_id)
+
+        if len(self.page.doc['availabilities']) == 0:
+            log('no availabilities', color='red')
+            return False
+
+        # Parse the slot information 
+        slot = self.page.find_best_slot(start_date, end_date)
+        if not slot:
+            if only_second == False and only_third == False:
+                log('First slot not found :(', color='red')
+            else:
+                log('Slot not found :(', color='red')
+            return False
+
+        slot_date_first, slot_date_second = self._parse_slot(slot, only_second, only_third, vac_name)
 
         appointment = {'profile_id':    profile_id,
                        'source_action': 'profile',
@@ -495,57 +585,9 @@ class Doctolib(LoginBrowser):
                     self.page.get_error())
                 return False
 
-        a_id = self.page.doc['id']
 
-        self.appointment_edit.go(id=a_id)
-
-        log('  ├╴ Booking for %(first_name)s %(last_name)s...' % self.patient)
-
-        self.appointment_edit.go(
-            id=a_id, params={'master_patient_id': self.patient['id']})
-
-        custom_fields = {}
-        for field in self.page.get_custom_fields():
-            if field['id'] == 'cov19':
-                value = 'Non'
-            elif field['placeholder']:
-                value = field['placeholder']
-            else:
-                print('%s (%s):' %
-                      (field['label'], field['placeholder']), end=' ', flush=True)
-                value = sys.stdin.readline().strip()
-
-            custom_fields[field['id']] = value
-
-        if dry_run:
-            log('  └╴ Booking status: %s', 'fake')
-            return True
-
-        data = {'appointment': {'custom_fields_values': custom_fields,
-                                'new_patient': True,
-                                'qualification_answers': {},
-                                'referrer_id': None,
-                                },
-                'bypass_mandatory_relative_contact_info': False,
-                'email': None,
-                'master_patient': self.patient,
-                'new_patient': True,
-                'patient': None,
-                'phone_number': None,
-                }
-
-        self.appointment_post.go(id=a_id, data=json.dumps(
-            data), headers=headers, method='PUT')
-
-        if 'redirection' in self.page.doc and not 'confirmed-appointment' in self.page.doc['redirection']:
-            log('  ├╴ Open %s to complete', self.BASEURL +
-                self.page.doc['redirection'])
-
-        self.appointment_post.go(id=a_id)
-
-        log('  └╴ Booking status: %s', self.page.doc['confirmed'])
-
-        return self.page.doc['confirmed']
+        # Make the booking
+        return self._make_booking(headers, dry_run)
 
 
 class DoctolibDE(Doctolib):
