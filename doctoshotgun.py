@@ -617,14 +617,9 @@ class Application:
         logging.root.setLevel(level)
         logging.root.addHandler(self.create_default_logger())
 
-    def main(self, cli_args=None):
-        colorama.init()  # needed for windows
-
-        doctolib_map = {
-            "fr": DoctolibFR,
-            "de": DoctolibDE
-        }
-
+    # Chain of Responsibility for parsing arguments in main function
+    # Function 1
+    def _generate_arguments(self, cli_args, doctolib_map):
         parser = argparse.ArgumentParser(
             description="Book a vaccine slot on Doctolib")
         parser.add_argument('--debug', '-d', action='store_true',
@@ -669,46 +664,10 @@ class Application:
         parser.add_argument('--code', type=str, default=None, help='2FA code')
         args = parser.parse_args(cli_args if cli_args else sys.argv[1:])
 
-        from types import SimpleNamespace
+        return args
 
-        if args.debug:
-            responses_dirname = tempfile.mkdtemp(prefix='woob_session_')
-            self.setup_loggers(logging.DEBUG)
-        else:
-            responses_dirname = None
-            self.setup_loggers(logging.WARNING)
-
-        if not args.password:
-            args.password = getpass.getpass()
-
-        docto = doctolib_map[args.country](
-            args.username, args.password, responses_dirname=responses_dirname)
-        if not docto.do_login(args.code):
-            return 1
-
-        patients = docto.get_patients()
-        if len(patients) == 0:
-            print("It seems that you don't have any Patient registered in your Doctolib account. Please fill your Patient data on Doctolib Website.")
-            return 1
-        if args.patient >= 0 and args.patient < len(patients):
-            docto.patient = patients[args.patient]
-        elif len(patients) > 1:
-            print('Available patients are:')
-            for i, patient in enumerate(patients):
-                print('* [%s] %s %s' %
-                      (i, patient['first_name'], patient['last_name']))
-            while True:
-                print('For which patient do you want to book a slot?',
-                      end=' ', flush=True)
-                try:
-                    docto.patient = patients[int(sys.stdin.readline().strip())]
-                except (ValueError, IndexError):
-                    continue
-                else:
-                    break
-        else:
-            docto.patient = patients[0]
-
+    # Function 2
+    def _parse_motives(self, docto, args):
         motives = []
         if not args.pfizer and not args.moderna and not args.janssen and not args.astrazeneca:
             if args.only_second:
@@ -761,33 +720,10 @@ class Application:
             else:
                 motives.append(docto.KEY_ASTRAZENECA)
 
-        vaccine_list = [docto.vaccine_motives[motive] for motive in motives]
+        return motives
 
-        if args.start_date:
-            try:
-                start_date = datetime.datetime.strptime(
-                    args.start_date, '%d/%m/%Y').date()
-            except ValueError as e:
-                print('Invalid value for --start-date: %s' % e)
-                return 1
-        else:
-            start_date = datetime.date.today()
-        if args.end_date:
-            try:
-                end_date = datetime.datetime.strptime(
-                    args.end_date, '%d/%m/%Y').date()
-            except ValueError as e:
-                print('Invalid value for --end-date: %s' % e)
-                return 1
-        else:
-            end_date = start_date + relativedelta(days=args.time_window)
-        log('Starting to look for vaccine slots for %s %s between %s and %s...',
-            docto.patient['first_name'], docto.patient['last_name'], start_date, end_date)
-        log('Vaccines: %s', ', '.join(vaccine_list))
-        log('Country: %s ', args.country)
-        log('This may take a few minutes/hours, be patient!')
-        cities = [docto.normalize(city) for city in args.city.split(',')]
-
+    # Function 3
+    def _parse_centers(self, cities, motives, vaccine_list, start_date, end_date, docto, args):
         while True:
             log_ts()
             try:
@@ -857,6 +793,89 @@ class Application:
                 return 1
         return 0
 
+    # Chain of Responsibility
+    def main(self, cli_args=None):
+        colorama.init()  # needed for windows
+
+        doctolib_map = {
+            "fr": DoctolibFR,
+            "de": DoctolibDE
+        }
+
+        # Generate arguments
+        args = self._generate_arguments(cli_args, doctolib_map)
+
+        from types import SimpleNamespace
+
+        if args.debug:
+            responses_dirname = tempfile.mkdtemp(prefix='woob_session_')
+            self.setup_loggers(logging.DEBUG)
+        else:
+            responses_dirname = None
+            self.setup_loggers(logging.WARNING)
+
+        if not args.password:
+            args.password = getpass.getpass()
+
+        docto = doctolib_map[args.country](
+            args.username, args.password, responses_dirname=responses_dirname)
+        if not docto.do_login(args.code):
+            return 1
+
+        patients = docto.get_patients()
+        if len(patients) == 0:
+            print("It seems that you don't have any Patient registered in your Doctolib account. Please fill your Patient data on Doctolib Website.")
+            return 1
+        if args.patient >= 0 and args.patient < len(patients):
+            docto.patient = patients[args.patient]
+        elif len(patients) > 1:
+            print('Available patients are:')
+            for i, patient in enumerate(patients):
+                print('* [%s] %s %s' %
+                      (i, patient['first_name'], patient['last_name']))
+            while True:
+                print('For which patient do you want to book a slot?',
+                      end=' ', flush=True)
+                try:
+                    docto.patient = patients[int(sys.stdin.readline().strip())]
+                except (ValueError, IndexError):
+                    continue
+                else:
+                    break
+        else:
+            docto.patient = patients[0]
+
+        # Parse motives
+        motives = self._parse_motives(docto, args)
+        vaccine_list = [docto.vaccine_motives[motive] for motive in motives]
+
+        if args.start_date:
+            try:
+                start_date = datetime.datetime.strptime(
+                    args.start_date, '%d/%m/%Y').date()
+            except ValueError as e:
+                print('Invalid value for --start-date: %s' % e)
+                return 1
+        else:
+            start_date = datetime.date.today()
+        if args.end_date:
+            try:
+                end_date = datetime.datetime.strptime(
+                    args.end_date, '%d/%m/%Y').date()
+            except ValueError as e:
+                print('Invalid value for --end-date: %s' % e)
+                return 1
+        else:
+            end_date = start_date + relativedelta(days=args.time_window)
+        log('Starting to look for vaccine slots for %s %s between %s and %s...',
+            docto.patient['first_name'], docto.patient['last_name'], start_date, end_date)
+        log('Vaccines: %s', ', '.join(vaccine_list))
+        log('Country: %s ', args.country)
+        log('This may take a few minutes/hours, be patient!')
+        cities = [docto.normalize(city) for city in args.city.split(',')]
+
+        # Parse the center data
+        return self._parse_centers(cities, motives, vaccine_list, start_date, end_date, docto, args)
 
 if __name__ == '__main__':
     try:
