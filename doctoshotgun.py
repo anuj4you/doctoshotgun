@@ -348,14 +348,21 @@ class Doctolib(LoginBrowser):
         normalized = re.sub(r'\W', '-', normalized)
         return normalized.lower()
 
-    def try_to_book(self, center, vaccine_list, start_date, end_date, only_second, only_third, dry_run=False):
+    # Chain of Responsibility
+    # Functions for each step of the try_to_book function
+    # Function 1
+    def _get_center_page(self, center):
         self.open(center['url'])
         p = urlparse(center['url'])
         center_id = p.path.split('/')[-1]
 
         center_page = self.center_booking.go(center_id=center_id)
         profile_id = self.page.get_profile_id()
-        # extract motive ids based on the vaccine names
+
+        return center_page, profile_id
+
+    # Function 2
+    def _extract_motives(self, vaccine_list, only_second, only_third):
         motives_id = dict()
         for vaccine in vaccine_list:
             motives_id[vaccine] = self.page.find_motive(
@@ -363,11 +370,22 @@ class Doctolib(LoginBrowser):
 
         motives_id = dict((k, v)
                           for k, v in motives_id.items() if v is not None)
+
+        return motives_id   
+    
+    # Chain of Responsibility Pattern
+    def try_to_book(self, center, vaccine_list, start_date, end_date, only_second, only_third, dry_run=False):
+        # Get center page information
+        center_page, profile_id = self._get_center_page(center)
+        
+        # Extract motive ids based on the vaccine names
+        motives_id = self._extract_motives(vaccine_list, only_second, only_third)
         if len(motives_id.values()) == 0:
             log('Unable to find requested vaccines in motives')
             log('Motives: %s', ', '.join(self.page.get_motives()))
             return False
 
+        # Book Place
         for place in self.page.get_places():
             if place['name']:
                 log('– %s...', place['name'])
@@ -384,7 +402,10 @@ class Doctolib(LoginBrowser):
 
         return False
 
-    def try_to_book_place(self, profile_id, motive_id, practice_id, agenda_ids, vac_name, start_date, end_date, only_second, only_third, dry_run=False):
+    # Chain of Responsibility
+    # Functions for each step of the try_to_book_place function
+    # Function 1
+    def _check_dates(self, start_date, motive_id, agenda_ids, practice_id):
         date = start_date.strftime('%Y-%m-%d')
         while date is not None:
             self.availabilities.go(
@@ -400,17 +421,10 @@ class Doctolib(LoginBrowser):
             else:
                 date = None
 
-        if len(self.page.doc['availabilities']) == 0:
-            log('no availabilities', color='red')
-            return False
-
-        slot = self.page.find_best_slot(start_date, end_date)
-        if not slot:
-            if only_second == False and only_third == False:
-                log('First slot not found :(', color='red')
-            else:
-                log('Slot not found :(', color='red')
-            return False
+    # Function 2
+    def _parse_slot(self, slot, only_second, only_third, vac_name):
+        slot_date_first = None
+        slot_date_second = None
 
         # depending on the country, the slot is returned in a different format. Go figure...
         if isinstance(slot, dict) and 'start_date' in slot:
@@ -434,6 +448,82 @@ class Doctolib(LoginBrowser):
         log('found!', color='green')
         log('  ├╴ Best slot found: %s', parse_date(
             slot_date_first).strftime('%c'))
+
+        return slot_date_first, slot_date_second
+
+    # Function 3
+    def _make_booking(self, headers, dry_run):
+        a_id = self.page.doc['id']
+
+        self.appointment_edit.go(id=a_id)
+
+        log('  ├╴ Booking for %(first_name)s %(last_name)s...' % self.patient)
+
+        self.appointment_edit.go(
+            id=a_id, params={'master_patient_id': self.patient['id']})
+
+        custom_fields = {}
+        for field in self.page.get_custom_fields():
+            if field['id'] == 'cov19':
+                value = 'Non'
+            elif field['placeholder']:
+                value = field['placeholder']
+            else:
+                print('%s (%s):' %
+                      (field['label'], field['placeholder']), end=' ', flush=True)
+                value = sys.stdin.readline().strip()
+
+            custom_fields[field['id']] = value
+
+        if dry_run:
+            log('  └╴ Booking status: %s', 'fake')
+            return True
+
+        data = {'appointment': {'custom_fields_values': custom_fields,
+                                'new_patient': True,
+                                'qualification_answers': {},
+                                'referrer_id': None,
+                                },
+                'bypass_mandatory_relative_contact_info': False,
+                'email': None,
+                'master_patient': self.patient,
+                'new_patient': True,
+                'patient': None,
+                'phone_number': None,
+                }
+
+        self.appointment_post.go(id=a_id, data=json.dumps(
+            data), headers=headers, method='PUT')
+
+        if 'redirection' in self.page.doc and not 'confirmed-appointment' in self.page.doc['redirection']:
+            log('  ├╴ Open %s to complete', self.BASEURL +
+                self.page.doc['redirection'])
+
+        self.appointment_post.go(id=a_id)
+
+        log('  └╴ Booking status: %s', self.page.doc['confirmed'])
+        
+        return self.page.doc['confirmed']
+
+    # Chain of Responsibility Pattern
+    def try_to_book_place(self, profile_id, motive_id, practice_id, agenda_ids, vac_name, start_date, end_date, only_second, only_third, dry_run=False):
+        # Check dates for availibility
+        self._check_dates(start_date, motive_id, agenda_ids, practice_id)
+
+        if len(self.page.doc['availabilities']) == 0:
+            log('no availabilities', color='red')
+            return False
+
+        # Parse the slot information 
+        slot = self.page.find_best_slot(start_date, end_date)
+        if not slot:
+            if only_second == False and only_third == False:
+                log('First slot not found :(', color='red')
+            else:
+                log('Slot not found :(', color='red')
+            return False
+
+        slot_date_first, slot_date_second = self._parse_slot(slot, only_second, only_third, vac_name)
 
         appointment = {'profile_id':    profile_id,
                        'source_action': 'profile',
@@ -495,57 +585,9 @@ class Doctolib(LoginBrowser):
                     self.page.get_error())
                 return False
 
-        a_id = self.page.doc['id']
 
-        self.appointment_edit.go(id=a_id)
-
-        log('  ├╴ Booking for %(first_name)s %(last_name)s...' % self.patient)
-
-        self.appointment_edit.go(
-            id=a_id, params={'master_patient_id': self.patient['id']})
-
-        custom_fields = {}
-        for field in self.page.get_custom_fields():
-            if field['id'] == 'cov19':
-                value = 'Non'
-            elif field['placeholder']:
-                value = field['placeholder']
-            else:
-                print('%s (%s):' %
-                      (field['label'], field['placeholder']), end=' ', flush=True)
-                value = sys.stdin.readline().strip()
-
-            custom_fields[field['id']] = value
-
-        if dry_run:
-            log('  └╴ Booking status: %s', 'fake')
-            return True
-
-        data = {'appointment': {'custom_fields_values': custom_fields,
-                                'new_patient': True,
-                                'qualification_answers': {},
-                                'referrer_id': None,
-                                },
-                'bypass_mandatory_relative_contact_info': False,
-                'email': None,
-                'master_patient': self.patient,
-                'new_patient': True,
-                'patient': None,
-                'phone_number': None,
-                }
-
-        self.appointment_post.go(id=a_id, data=json.dumps(
-            data), headers=headers, method='PUT')
-
-        if 'redirection' in self.page.doc and not 'confirmed-appointment' in self.page.doc['redirection']:
-            log('  ├╴ Open %s to complete', self.BASEURL +
-                self.page.doc['redirection'])
-
-        self.appointment_post.go(id=a_id)
-
-        log('  └╴ Booking status: %s', self.page.doc['confirmed'])
-
-        return self.page.doc['confirmed']
+        # Make the booking
+        return self._make_booking(headers, dry_run)
 
 
 class DoctolibDE(Doctolib):
@@ -573,14 +615,6 @@ class DoctolibDE(Doctolib):
     centers = URL(r'/impfung-covid-19-corona/(?P<where>\w+)', CentersPage)
     center = URL(r'/praxis/.*', CenterPage)
 
-    # Vaccine Object for Decorator object
-    vaccine_object = {
-        'pfizer': [KEY_PFIZER, KEY_PFIZER_SECOND, KEY_PFIZER_THIRD],
-        'moderna': [KEY_MODERNA, KEY_MODERNA_SECOND, KEY_MODERNA_THIRD],
-        'janssen': [KEY_JANSSEN],
-        'astrazeneca': [KEY_ASTRAZENECA, KEY_ASTRAZENECA_SECOND]
-    }
-
 
 class DoctolibFR(Doctolib):
     BASEURL = 'https://www.doctolib.fr'
@@ -604,66 +638,10 @@ class DoctolibFR(Doctolib):
         KEY_ASTRAZENECA: 'AstraZeneca',
         KEY_ASTRAZENECA_SECOND: '2de.*AstraZeneca',
     }
+
     centers = URL(r'/vaccination-covid-19/(?P<where>\w+)', CentersPage)
     center = URL(r'/centre-de-sante/.*', CenterPage)
 
-    # Vaccine Object for Decorator object
-    vaccine_object = {
-        'pfizer': [KEY_PFIZER, KEY_PFIZER_SECOND, KEY_PFIZER_THIRD],
-        'moderna': [KEY_MODERNA, KEY_MODERNA_SECOND, KEY_MODERNA_THIRD],
-        'janssen': [KEY_JANSSEN],
-        'astrazeneca': [KEY_ASTRAZENECA, KEY_ASTRAZENECA_SECOND]
-    }
-
-# Define Vaccine Decorator Functions
-# pfizer decorator
-def add_pfizer(vaccine_list):
-    vaccine_list.append('pfizer')
-    return vaccine_list
-# moderna decorator
-def add_moderna(vaccine_list):
-    vaccine_list.append('moderna')
-    return vaccine_list
-# janssen decorator
-def add_janssen(vaccine_list):
-    vaccine_list.append('janssen')
-    return vaccine_list
-# astrazeneca decorator
-def add_astrazeneca(vaccine_list):
-    vaccine_list.append('astrazeneca')
-    return vaccine_list
-
-# Vaccine Dose Functions
-# first dose function
-def add_first_dose(vaccine_list, motives, doctolib):
-    for vaccine in vaccine_list:
-        try:
-            motive = doctolib.vaccine_object[vaccine][0]
-            motives.append(motive)
-        except IndexError:
-            print(f"Invalid args: {vaccine} has no first shot")
-
-    return motive
-# second dose function
-def add_second_dose(vaccine_list, motives, doctolib):
-    for vaccine in vaccine_list:
-        try:
-            motive = doctolib.vaccine_object[vaccine][1]
-            motives.append(motive)
-        except IndexError:
-            print(f"Invalid args: {vaccine} has no second shot")
-    
-    return motives
-# third dose function
-def add_third_dose(vaccine_list, motives, doctolib):
-    for vaccine in vaccine_list:
-        try:
-            motive = doctolib.vaccine_object[vaccine][2]
-            motives.append(motive)
-        except IndexError:
-            print(f"Invalid args: {vaccine} has no third shot")
-    
-    return motives
 
 class Application:
     @classmethod
@@ -774,91 +752,58 @@ class Application:
             docto.patient = patients[0]
 
         motives = []
-        
-        # Decorator Pattern
-        # Decorate the vaccine_object_list
-        vaccine_object_list = []
-        if args.pfizer:
-            vaccine_object_list = add_pfizer(vaccine_object_list)
-        if args.moderna:
-            vaccine_object_list = add_moderna(vaccine_object_list)
-        if args.janssen:
-            vaccine_object_list = add_janssen(vaccine_object_list)
-        if args.astrazeneca:
-            vaccine_object_list = add_astrazeneca(vaccine_object_list)
         if not args.pfizer and not args.moderna and not args.janssen and not args.astrazeneca:
-            vaccine_object_list = add_pfizer(vaccine_object_list)
-            vaccine_object_list = add_moderna(vaccine_object_list)
-            vaccine_object_list = add_janssen(vaccine_object_list)
-            # vaccine_object_list = add_astrazeneca(vaccine_object_list) # do not add AstraZeneca by default
-
-        # Finally generate the vaccine motive
-        if args.only_second:
-            motives = add_second_dose(vaccine_object_list, motives, docto)
-        elif args.only_third:
-            motives = add_third_dose(vaccine_object_list, motives, docto)
-        else:
-            motives = add_first_dose(vaccine_object_list, motives, docto)
-
-        # Comment out previous implementation
-        # if not args.pfizer and not args.moderna and not args.janssen and not args.astrazeneca:
-        #     if args.only_second:
-        #         motives.append(docto.KEY_PFIZER_SECOND)
-        #         motives.append(docto.KEY_MODERNA_SECOND)
-        #         # motives.append(docto.KEY_ASTRAZENECA_SECOND) #do not add AstraZeneca by default
-        #     elif args.only_third:
-        #         if not docto.KEY_PFIZER_THIRD and not docto.KEY_MODERNA_THIRD:
-        #             print('Invalid args: No third shot vaccinations in this country')
-        #             return 1
-        #         motives.append(docto.KEY_PFIZER_THIRD)
-        #         motives.append(docto.KEY_MODERNA_THIRD)
-        #     else:
-        #         motives.append(docto.KEY_PFIZER)
-        #         motives.append(docto.KEY_MODERNA)
-        #         motives.append(docto.KEY_JANSSEN)
-        #         # motives.append(docto.KEY_ASTRAZENECA) #do not add AstraZeneca by default
-        # if args.pfizer:
-        #     if args.only_second:
-        #         motives.append(docto.KEY_PFIZER_SECOND)
-        #     elif args.only_third:
-        #         if not docto.KEY_PFIZER_THIRD:  # not available in all countries
-        #             print('Invalid args: Pfizer has no third shot in this country')
-        #             return 1
-        #         motives.append(docto.KEY_PFIZER_THIRD)
-        #     else:
-        #         motives.append(docto.KEY_PFIZER)
-        # if args.moderna:
-        #     if args.only_second:
-        #         motives.append(docto.KEY_MODERNA_SECOND)
-        #     elif args.only_third:
-        #         if not docto.KEY_MODERNA_THIRD:  # not available in all countries
-        #             print('Invalid args: Moderna has no third shot in this country')
-        #             return 1
-        #         motives.append(docto.KEY_MODERNA_THIRD)
-        #     else:
-        #         motives.append(docto.KEY_MODERNA)
-        # if args.janssen:
-        #     if args.only_second or args.only_third:
-        #         print('Invalid args: Janssen has no second or third shot')
-        #         return 1
-        #     else:
-        #         motives.append(docto.KEY_JANSSEN)
-        # if args.astrazeneca:
-        #     if args.only_second:
-        #         motives.append(docto.KEY_ASTRAZENECA_SECOND)
-        #     elif args.only_third:
-        #         print('Invalid args: AstraZeneca has no third shot')
-        #         return 1
-        #     else:
-        #         motives.append(docto.KEY_ASTRAZENECA)
-
-        # Generate vaccine list from motives
-        vaccine_list = []
-        for motive in motives:
-            if motive is None:
+            if args.only_second:
+                motives.append(docto.KEY_PFIZER_SECOND)
+                motives.append(docto.KEY_MODERNA_SECOND)
+                # motives.append(docto.KEY_ASTRAZENECA_SECOND) #do not add AstraZeneca by default
+            elif args.only_third:
+                if not docto.KEY_PFIZER_THIRD and not docto.KEY_MODERNA_THIRD:
+                    print('Invalid args: No third shot vaccinations in this country')
+                    return 1
+                motives.append(docto.KEY_PFIZER_THIRD)
+                motives.append(docto.KEY_MODERNA_THIRD)
+            else:
+                motives.append(docto.KEY_PFIZER)
+                motives.append(docto.KEY_MODERNA)
+                motives.append(docto.KEY_JANSSEN)
+                # motives.append(docto.KEY_ASTRAZENECA) #do not add AstraZeneca by default
+        if args.pfizer:
+            if args.only_second:
+                motives.append(docto.KEY_PFIZER_SECOND)
+            elif args.only_third:
+                if not docto.KEY_PFIZER_THIRD:  # not available in all countries
+                    print('Invalid args: Pfizer has no third shot in this country')
+                    return 1
+                motives.append(docto.KEY_PFIZER_THIRD)
+            else:
+                motives.append(docto.KEY_PFIZER)
+        if args.moderna:
+            if args.only_second:
+                motives.append(docto.KEY_MODERNA_SECOND)
+            elif args.only_third:
+                if not docto.KEY_MODERNA_THIRD:  # not available in all countries
+                    print('Invalid args: Moderna has no third shot in this country')
+                    return 1
+                motives.append(docto.KEY_MODERNA_THIRD)
+            else:
+                motives.append(docto.KEY_MODERNA)
+        if args.janssen:
+            if args.only_second or args.only_third:
+                print('Invalid args: Janssen has no second or third shot')
                 return 1
             else:
-                vaccine_list.append(docto.vaccine_motives[motive])
+                motives.append(docto.KEY_JANSSEN)
+        if args.astrazeneca:
+            if args.only_second:
+                motives.append(docto.KEY_ASTRAZENECA_SECOND)
+            elif args.only_third:
+                print('Invalid args: AstraZeneca has no third shot')
+                return 1
+            else:
+                motives.append(docto.KEY_ASTRAZENECA)
+
+        vaccine_list = [docto.vaccine_motives[motive] for motive in motives]
 
         if args.start_date:
             try:
