@@ -348,21 +348,14 @@ class Doctolib(LoginBrowser):
         normalized = re.sub(r'\W', '-', normalized)
         return normalized.lower()
 
-    # Chain of Responsibility
-    # Functions for each step of the try_to_book function
-    # Function 1
-    def _get_center_page(self, center):
+    def try_to_book(self, center, vaccine_list, start_date, end_date, only_second, only_third, dry_run=False):
         self.open(center['url'])
         p = urlparse(center['url'])
         center_id = p.path.split('/')[-1]
 
         center_page = self.center_booking.go(center_id=center_id)
         profile_id = self.page.get_profile_id()
-
-        return center_page, profile_id
-
-    # Function 2
-    def _extract_motives(self, vaccine_list, only_second, only_third):
+        # extract motive ids based on the vaccine names
         motives_id = dict()
         for vaccine in vaccine_list:
             motives_id[vaccine] = self.page.find_motive(
@@ -370,22 +363,11 @@ class Doctolib(LoginBrowser):
 
         motives_id = dict((k, v)
                           for k, v in motives_id.items() if v is not None)
-
-        return motives_id   
-    
-    # Chain of Responsibility Pattern
-    def try_to_book(self, center, vaccine_list, start_date, end_date, only_second, only_third, dry_run=False):
-        # Get center page information
-        center_page, profile_id = self._get_center_page(center)
-        
-        # Extract motive ids based on the vaccine names
-        motives_id = self._extract_motives(vaccine_list, only_second, only_third)
         if len(motives_id.values()) == 0:
             log('Unable to find requested vaccines in motives')
             log('Motives: %s', ', '.join(self.page.get_motives()))
             return False
 
-        # Book Place
         for place in self.page.get_places():
             if place['name']:
                 log('– %s...', place['name'])
@@ -402,10 +384,7 @@ class Doctolib(LoginBrowser):
 
         return False
 
-    # Chain of Responsibility
-    # Functions for each step of the try_to_book_place function
-    # Function 1
-    def _check_dates(self, start_date, motive_id, agenda_ids, practice_id):
+    def try_to_book_place(self, profile_id, motive_id, practice_id, agenda_ids, vac_name, start_date, end_date, only_second, only_third, dry_run=False):
         date = start_date.strftime('%Y-%m-%d')
         while date is not None:
             self.availabilities.go(
@@ -421,10 +400,17 @@ class Doctolib(LoginBrowser):
             else:
                 date = None
 
-    # Function 2
-    def _parse_slot(self, slot, only_second, only_third, vac_name):
-        slot_date_first = None
-        slot_date_second = None
+        if len(self.page.doc['availabilities']) == 0:
+            log('no availabilities', color='red')
+            return False
+
+        slot = self.page.find_best_slot(start_date, end_date)
+        if not slot:
+            if only_second == False and only_third == False:
+                log('First slot not found :(', color='red')
+            else:
+                log('Slot not found :(', color='red')
+            return False
 
         # depending on the country, the slot is returned in a different format. Go figure...
         if isinstance(slot, dict) and 'start_date' in slot:
@@ -448,82 +434,6 @@ class Doctolib(LoginBrowser):
         log('found!', color='green')
         log('  ├╴ Best slot found: %s', parse_date(
             slot_date_first).strftime('%c'))
-
-        return slot_date_first, slot_date_second
-
-    # Function 3
-    def _make_booking(self, headers, dry_run):
-        a_id = self.page.doc['id']
-
-        self.appointment_edit.go(id=a_id)
-
-        log('  ├╴ Booking for %(first_name)s %(last_name)s...' % self.patient)
-
-        self.appointment_edit.go(
-            id=a_id, params={'master_patient_id': self.patient['id']})
-
-        custom_fields = {}
-        for field in self.page.get_custom_fields():
-            if field['id'] == 'cov19':
-                value = 'Non'
-            elif field['placeholder']:
-                value = field['placeholder']
-            else:
-                print('%s (%s):' %
-                      (field['label'], field['placeholder']), end=' ', flush=True)
-                value = sys.stdin.readline().strip()
-
-            custom_fields[field['id']] = value
-
-        if dry_run:
-            log('  └╴ Booking status: %s', 'fake')
-            return True
-
-        data = {'appointment': {'custom_fields_values': custom_fields,
-                                'new_patient': True,
-                                'qualification_answers': {},
-                                'referrer_id': None,
-                                },
-                'bypass_mandatory_relative_contact_info': False,
-                'email': None,
-                'master_patient': self.patient,
-                'new_patient': True,
-                'patient': None,
-                'phone_number': None,
-                }
-
-        self.appointment_post.go(id=a_id, data=json.dumps(
-            data), headers=headers, method='PUT')
-
-        if 'redirection' in self.page.doc and not 'confirmed-appointment' in self.page.doc['redirection']:
-            log('  ├╴ Open %s to complete', self.BASEURL +
-                self.page.doc['redirection'])
-
-        self.appointment_post.go(id=a_id)
-
-        log('  └╴ Booking status: %s', self.page.doc['confirmed'])
-        
-        return self.page.doc['confirmed']
-
-    # Chain of Responsibility Pattern
-    def try_to_book_place(self, profile_id, motive_id, practice_id, agenda_ids, vac_name, start_date, end_date, only_second, only_third, dry_run=False):
-        # Check dates for availibility
-        self._check_dates(start_date, motive_id, agenda_ids, practice_id)
-
-        if len(self.page.doc['availabilities']) == 0:
-            log('no availabilities', color='red')
-            return False
-
-        # Parse the slot information 
-        slot = self.page.find_best_slot(start_date, end_date)
-        if not slot:
-            if only_second == False and only_third == False:
-                log('First slot not found :(', color='red')
-            else:
-                log('Slot not found :(', color='red')
-            return False
-
-        slot_date_first, slot_date_second = self._parse_slot(slot, only_second, only_third, vac_name)
 
         appointment = {'profile_id':    profile_id,
                        'source_action': 'profile',
@@ -585,9 +495,57 @@ class Doctolib(LoginBrowser):
                     self.page.get_error())
                 return False
 
+        a_id = self.page.doc['id']
 
-        # Make the booking
-        return self._make_booking(headers, dry_run)
+        self.appointment_edit.go(id=a_id)
+
+        log('  ├╴ Booking for %(first_name)s %(last_name)s...' % self.patient)
+
+        self.appointment_edit.go(
+            id=a_id, params={'master_patient_id': self.patient['id']})
+
+        custom_fields = {}
+        for field in self.page.get_custom_fields():
+            if field['id'] == 'cov19':
+                value = 'Non'
+            elif field['placeholder']:
+                value = field['placeholder']
+            else:
+                print('%s (%s):' %
+                      (field['label'], field['placeholder']), end=' ', flush=True)
+                value = sys.stdin.readline().strip()
+
+            custom_fields[field['id']] = value
+
+        if dry_run:
+            log('  └╴ Booking status: %s', 'fake')
+            return True
+
+        data = {'appointment': {'custom_fields_values': custom_fields,
+                                'new_patient': True,
+                                'qualification_answers': {},
+                                'referrer_id': None,
+                                },
+                'bypass_mandatory_relative_contact_info': False,
+                'email': None,
+                'master_patient': self.patient,
+                'new_patient': True,
+                'patient': None,
+                'phone_number': None,
+                }
+
+        self.appointment_post.go(id=a_id, data=json.dumps(
+            data), headers=headers, method='PUT')
+
+        if 'redirection' in self.page.doc and not 'confirmed-appointment' in self.page.doc['redirection']:
+            log('  ├╴ Open %s to complete', self.BASEURL +
+                self.page.doc['redirection'])
+
+        self.appointment_post.go(id=a_id)
+
+        log('  └╴ Booking status: %s', self.page.doc['confirmed'])
+
+        return self.page.doc['confirmed']
 
 
 class DoctolibDE(Doctolib):
@@ -659,14 +617,9 @@ class Application:
         logging.root.setLevel(level)
         logging.root.addHandler(self.create_default_logger())
 
-    def main(self, cli_args=None):
-        colorama.init()  # needed for windows
-
-        doctolib_map = {
-            "fr": DoctolibFR,
-            "de": DoctolibDE
-        }
-
+    # Chain of Responsibility for parsing arguments in main function
+    # Function 1
+    def _generate_arguments(self, cli_args, doctolib_map):
         parser = argparse.ArgumentParser(
             description="Book a vaccine slot on Doctolib")
         parser.add_argument('--debug', '-d', action='store_true',
@@ -711,46 +664,10 @@ class Application:
         parser.add_argument('--code', type=str, default=None, help='2FA code')
         args = parser.parse_args(cli_args if cli_args else sys.argv[1:])
 
-        from types import SimpleNamespace
+        return args
 
-        if args.debug:
-            responses_dirname = tempfile.mkdtemp(prefix='woob_session_')
-            self.setup_loggers(logging.DEBUG)
-        else:
-            responses_dirname = None
-            self.setup_loggers(logging.WARNING)
-
-        if not args.password:
-            args.password = getpass.getpass()
-
-        docto = doctolib_map[args.country](
-            args.username, args.password, responses_dirname=responses_dirname)
-        if not docto.do_login(args.code):
-            return 1
-
-        patients = docto.get_patients()
-        if len(patients) == 0:
-            print("It seems that you don't have any Patient registered in your Doctolib account. Please fill your Patient data on Doctolib Website.")
-            return 1
-        if args.patient >= 0 and args.patient < len(patients):
-            docto.patient = patients[args.patient]
-        elif len(patients) > 1:
-            print('Available patients are:')
-            for i, patient in enumerate(patients):
-                print('* [%s] %s %s' %
-                      (i, patient['first_name'], patient['last_name']))
-            while True:
-                print('For which patient do you want to book a slot?',
-                      end=' ', flush=True)
-                try:
-                    docto.patient = patients[int(sys.stdin.readline().strip())]
-                except (ValueError, IndexError):
-                    continue
-                else:
-                    break
-        else:
-            docto.patient = patients[0]
-
+    # Function 2
+    def _parse_motives(self, docto, args):
         motives = []
         if not args.pfizer and not args.moderna and not args.janssen and not args.astrazeneca:
             if args.only_second:
@@ -803,33 +720,10 @@ class Application:
             else:
                 motives.append(docto.KEY_ASTRAZENECA)
 
-        vaccine_list = [docto.vaccine_motives[motive] for motive in motives]
+        return motives
 
-        if args.start_date:
-            try:
-                start_date = datetime.datetime.strptime(
-                    args.start_date, '%d/%m/%Y').date()
-            except ValueError as e:
-                print('Invalid value for --start-date: %s' % e)
-                return 1
-        else:
-            start_date = datetime.date.today()
-        if args.end_date:
-            try:
-                end_date = datetime.datetime.strptime(
-                    args.end_date, '%d/%m/%Y').date()
-            except ValueError as e:
-                print('Invalid value for --end-date: %s' % e)
-                return 1
-        else:
-            end_date = start_date + relativedelta(days=args.time_window)
-        log('Starting to look for vaccine slots for %s %s between %s and %s...',
-            docto.patient['first_name'], docto.patient['last_name'], start_date, end_date)
-        log('Vaccines: %s', ', '.join(vaccine_list))
-        log('Country: %s ', args.country)
-        log('This may take a few minutes/hours, be patient!')
-        cities = [docto.normalize(city) for city in args.city.split(',')]
-
+    # Function 3
+    def _parse_centers(self, cities, motives, vaccine_list, start_date, end_date, docto, args):
         while True:
             log_ts()
             try:
@@ -899,6 +793,89 @@ class Application:
                 return 1
         return 0
 
+    # Chain of Responsibility
+    def main(self, cli_args=None):
+        colorama.init()  # needed for windows
+
+        doctolib_map = {
+            "fr": DoctolibFR,
+            "de": DoctolibDE
+        }
+
+        # Generate arguments
+        args = self._generate_arguments(cli_args, doctolib_map)
+
+        from types import SimpleNamespace
+
+        if args.debug:
+            responses_dirname = tempfile.mkdtemp(prefix='woob_session_')
+            self.setup_loggers(logging.DEBUG)
+        else:
+            responses_dirname = None
+            self.setup_loggers(logging.WARNING)
+
+        if not args.password:
+            args.password = getpass.getpass()
+
+        docto = doctolib_map[args.country](
+            args.username, args.password, responses_dirname=responses_dirname)
+        if not docto.do_login(args.code):
+            return 1
+
+        patients = docto.get_patients()
+        if len(patients) == 0:
+            print("It seems that you don't have any Patient registered in your Doctolib account. Please fill your Patient data on Doctolib Website.")
+            return 1
+        if args.patient >= 0 and args.patient < len(patients):
+            docto.patient = patients[args.patient]
+        elif len(patients) > 1:
+            print('Available patients are:')
+            for i, patient in enumerate(patients):
+                print('* [%s] %s %s' %
+                      (i, patient['first_name'], patient['last_name']))
+            while True:
+                print('For which patient do you want to book a slot?',
+                      end=' ', flush=True)
+                try:
+                    docto.patient = patients[int(sys.stdin.readline().strip())]
+                except (ValueError, IndexError):
+                    continue
+                else:
+                    break
+        else:
+            docto.patient = patients[0]
+
+        # Parse motives
+        motives = self._parse_motives(docto, args)
+        vaccine_list = [docto.vaccine_motives[motive] for motive in motives]
+
+        if args.start_date:
+            try:
+                start_date = datetime.datetime.strptime(
+                    args.start_date, '%d/%m/%Y').date()
+            except ValueError as e:
+                print('Invalid value for --start-date: %s' % e)
+                return 1
+        else:
+            start_date = datetime.date.today()
+        if args.end_date:
+            try:
+                end_date = datetime.datetime.strptime(
+                    args.end_date, '%d/%m/%Y').date()
+            except ValueError as e:
+                print('Invalid value for --end-date: %s' % e)
+                return 1
+        else:
+            end_date = start_date + relativedelta(days=args.time_window)
+        log('Starting to look for vaccine slots for %s %s between %s and %s...',
+            docto.patient['first_name'], docto.patient['last_name'], start_date, end_date)
+        log('Vaccines: %s', ', '.join(vaccine_list))
+        log('Country: %s ', args.country)
+        log('This may take a few minutes/hours, be patient!')
+        cities = [docto.normalize(city) for city in args.city.split(',')]
+
+        # Parse the center data
+        return self._parse_centers(cities, motives, vaccine_list, start_date, end_date, docto, args)
 
 if __name__ == '__main__':
     try:
